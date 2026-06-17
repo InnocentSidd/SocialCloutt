@@ -65,13 +65,11 @@ export const adminListApplications = createServerFn({ method: "GET" })
 
 export const adminUpdateApplicationStatus = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: { id: string; status: "new" | "reviewing" | "accepted" | "rejected" }) =>
-    z
-      .object({
-        id: z.string().uuid(),
-        status: z.enum(["new", "reviewing", "accepted", "rejected"]),
-      })
-      .parse(d),
+  .validator(
+    z.object({
+      id: z.string().uuid(),
+      status: z.enum(["new", "reviewing", "accepted", "rejected"]),
+    })
   )
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
@@ -84,7 +82,7 @@ export const adminUpdateApplicationStatus = createServerFn({ method: "POST" })
 
 export const adminDeleteApplication = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: { id: string }) => z.object({ id: z.string().uuid() }).parse(d))
+  .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
     await db.execute({
@@ -111,7 +109,7 @@ const campaignSchema = z.object({
 
 export const adminUpsertCampaign = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: z.input<typeof campaignSchema>) => campaignSchema.parse(d))
+  .validator(campaignSchema)
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
     if (data.id) {
@@ -186,7 +184,7 @@ export const adminListCampaigns = createServerFn({ method: "GET" })
 
 export const adminDeleteCampaign = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: { id: string }) => z.object({ id: z.string().uuid() }).parse(d))
+  .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
     await db.execute({
@@ -227,7 +225,7 @@ export const adminListTeam = createServerFn({ method: "GET" })
 
 export const adminUpsertTeam = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: z.input<typeof teamSchema>) => teamSchema.parse(d))
+  .validator(teamSchema)
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
     if (data.id) {
@@ -267,7 +265,7 @@ export const adminUpsertTeam = createServerFn({ method: "POST" })
 
 export const adminDeleteTeam = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: { id: string }) => z.object({ id: z.string().uuid() }).parse(d))
+  .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
     await db.execute({
@@ -307,7 +305,7 @@ export const adminListTestimonials = createServerFn({ method: "GET" })
 
 export const adminUpsertTestimonial = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: z.input<typeof testimonialSchema>) => testimonialSchema.parse(d))
+  .validator(testimonialSchema)
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
     if (data.id) {
@@ -347,7 +345,7 @@ export const adminUpsertTestimonial = createServerFn({ method: "POST" })
 
 export const adminDeleteTestimonial = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d: { id: string }) => z.object({ id: z.string().uuid() }).parse(d))
+  .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
     await db.execute({

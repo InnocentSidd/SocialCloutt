@@ -56,7 +56,7 @@ const applicationSchema = z.discriminatedUnion("type", [
 export type ApplicationInput = z.infer<typeof applicationSchema>;
 
 export const submitApplication = createServerFn({ method: "POST" })
-  .inputValidator((d: ApplicationInput) => applicationSchema.parse(d))
+  .validator(applicationSchema)
   .handler(async ({ data }) => {
     await ensureDb();
     try {
