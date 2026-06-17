@@ -3,10 +3,12 @@ import process from "node:process";
 import crypto from "node:crypto";
 
 const isVercel = !!(process.env.VERCEL || process.env.NOW_BUILDER);
-const dbUrl = isVercel ? "file:/tmp/local.db" : "file:local.db";
+const dbUrl = process.env.TURSO_DATABASE_URL || (isVercel ? "file:/tmp/local.db" : "file:local.db");
+const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
 
 export const db = createClient({
   url: dbUrl,
+  authToken,
 });
 
 let initPromise: Promise<void> | null = null;
