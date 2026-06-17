@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { db, ensureDb } from "@/lib/db";
+import { supabase, ensureDb } from "@/lib/db";
 import crypto from "node:crypto";
 
 const baseDetails = {
@@ -60,17 +60,18 @@ export const submitApplication = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await ensureDb();
     try {
-      await db.execute({
-        sql: "INSERT INTO applications (id, name, email, phone, type, details) VALUES (?, ?, ?, ?, ?, ?)",
-        args: [
-          crypto.randomUUID(),
-          data.name,
-          data.email,
-          data.phone || null,
-          data.type,
-          JSON.stringify(data.details),
-        ],
-      });
+      const { error } = await supabase
+        .from("applications")
+        .insert({
+          id: crypto.randomUUID(),
+          name: data.name,
+          email: data.email,
+          phone: data.phone || null,
+          type: data.type,
+          details: data.details,
+        });
+
+      if (error) throw error;
       return { ok: true };
     } catch (error) {
       console.error("submitApplication error", error);

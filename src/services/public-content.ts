@@ -1,16 +1,21 @@
 import { createServerFn } from "@tanstack/react-start";
-import { db, ensureDb } from "@/lib/db";
+import { supabase, ensureDb } from "@/lib/db";
 
 export const listPublicCampaigns = createServerFn({ method: "GET" }).handler(async () => {
   await ensureDb();
   try {
-    const res = await db.execute(`
-      SELECT id, title, client, category, cover_image, description, results, reach, engagement, sort_order 
-      FROM campaigns 
-      WHERE published = 1 
-      ORDER BY sort_order ASC, created_at DESC
-    `);
-    return res.rows.map((row) => ({
+    const { data, error } = await supabase
+      .from("campaigns")
+      .select("id, title, client, category, cover_image, description, results, reach, engagement, sort_order")
+      .eq("published", 1)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (error || !data) {
+      throw error || new Error("Failed to load campaigns");
+    }
+
+    return data.map((row) => ({
       id: String(row.id),
       title: String(row.title),
       client: row.client ? String(row.client) : null,
@@ -31,19 +36,23 @@ export const listPublicCampaigns = createServerFn({ method: "GET" }).handler(asy
 export const listPublicTeam = createServerFn({ method: "GET" }).handler(async () => {
   await ensureDb();
   try {
-    const res = await db.execute(`
-      SELECT id, name, role, image, bio, socials, sort_order 
-      FROM team_members 
-      WHERE published = 1 
-      ORDER BY sort_order ASC
-    `);
-    return res.rows.map((row) => ({
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("id, name, role, image, bio, socials, sort_order")
+      .eq("published", 1)
+      .order("sort_order", { ascending: true });
+
+    if (error || !data) {
+      throw error || new Error("Failed to load team");
+    }
+
+    return data.map((row) => ({
       id: String(row.id),
       name: String(row.name),
       role: String(row.role),
       image: row.image ? String(row.image) : null,
       bio: row.bio ? String(row.bio) : null,
-      socials: row.socials ? JSON.parse(String(row.socials)) : {},
+      socials: typeof row.socials === "string" ? JSON.parse(row.socials) : (row.socials || {}),
       sort_order: Number(row.sort_order),
     }));
   } catch (error) {
@@ -55,13 +64,17 @@ export const listPublicTeam = createServerFn({ method: "GET" }).handler(async ()
 export const listPublicTestimonials = createServerFn({ method: "GET" }).handler(async () => {
   await ensureDb();
   try {
-    const res = await db.execute(`
-      SELECT id, author, role, quote, avatar, sort_order 
-      FROM testimonials 
-      WHERE published = 1 
-      ORDER BY sort_order ASC
-    `);
-    return res.rows.map((row) => ({
+    const { data, error } = await supabase
+      .from("testimonials")
+      .select("id, author, role, quote, avatar, sort_order")
+      .eq("published", 1)
+      .order("sort_order", { ascending: true });
+
+    if (error || !data) {
+      throw error || new Error("Failed to load testimonials");
+    }
+
+    return data.map((row) => ({
       id: String(row.id),
       author: String(row.author),
       role: row.role ? String(row.role) : null,
@@ -74,3 +87,4 @@ export const listPublicTestimonials = createServerFn({ method: "GET" }).handler(
     return [];
   }
 });
+

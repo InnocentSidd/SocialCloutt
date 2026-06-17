@@ -1,7 +1,7 @@
 import { createServerFn, createMiddleware } from "@tanstack/react-start";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { db, ensureDb } from "@/lib/db";
+import { supabase, ensureDb } from "@/lib/db";
 
 // Custom Auth Middleware
 const requireAuth = createMiddleware({ type: "function" }).server(async ({ next }) => {
@@ -14,19 +14,21 @@ const requireAuth = createMiddleware({ type: "function" }).server(async ({ next 
     throw new Error("Unauthorized: No session token");
   }
 
-  const res = await db.execute({
-    sql: `SELECT users.id 
-          FROM sessions 
-          JOIN users ON sessions.user_id = users.id 
-          WHERE sessions.id = ? AND sessions.expires_at > datetime('now')`,
-    args: [sessionToken],
-  });
+  const { data: sessionData, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id, users (id)")
+    .eq("id", sessionToken)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
 
-  if (res.rows.length === 0) {
+  if (sessionError || !sessionData) {
     throw new Error("Unauthorized: Invalid session");
   }
 
-  const user = res.rows[0] as unknown as { id: string };
+  const user = (sessionData as any).users as { id: string } | null;
+  if (!user) {
+    throw new Error("Unauthorized: User not found");
+  }
 
   return next({
     context: {
@@ -36,11 +38,13 @@ const requireAuth = createMiddleware({ type: "function" }).server(async ({ next 
 });
 
 async function assertAdmin(userId: string) {
-  const roleRes = await db.execute({
-    sql: "SELECT role FROM user_roles WHERE user_id = ? AND role = 'admin'",
-    args: [userId],
-  });
-  if (roleRes.rows.length === 0) {
+  const { data: roleRes, error } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "admin");
+
+  if (error || !roleRes || roleRes.length === 0) {
     throw new Error("Forbidden: User is not an admin");
   }
 }
@@ -49,8 +53,16 @@ export const adminListApplications = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.userId);
-    const res = await db.execute("SELECT * FROM applications ORDER BY created_at DESC");
-    return res.rows.map((row) => ({
+    const { data, error } = await supabase
+      .from("applications")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error || !data) {
+      throw new Error("Failed to load applications");
+    }
+
+    return data.map((row) => ({
       id: String(row.id),
       created_at: String(row.created_at),
       updated_at: String(row.updated_at),
@@ -59,7 +71,7 @@ export const adminListApplications = createServerFn({ method: "GET" })
       phone: row.phone ? String(row.phone) : null,
       status: String(row.status) as "new" | "reviewing" | "accepted" | "rejected",
       type: String(row.type) as "influencer" | "marketeer" | "brand",
-      details: row.details ? JSON.parse(String(row.details)) : {},
+      details: typeof row.details === "string" ? JSON.parse(row.details) : (row.details || {}),
     }));
   });
 
@@ -73,10 +85,14 @@ export const adminUpdateApplicationStatus = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
-    await db.execute({
-      sql: "UPDATE applications SET status = ?, updated_at = datetime('now') WHERE id = ?",
-      args: [data.status, data.id],
-    });
+    const { error } = await supabase
+      .from("applications")
+      .update({ status: data.status, updated_at: new Date().toISOString() })
+      .eq("id", data.id);
+
+    if (error) {
+      throw new Error("Failed to update application status");
+    }
     return { ok: true };
   });
 
@@ -85,10 +101,14 @@ export const adminDeleteApplication = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
-    await db.execute({
-      sql: "DELETE FROM applications WHERE id = ?",
-      args: [data.id],
-    });
+    const { error } = await supabase
+      .from("applications")
+      .delete()
+      .eq("id", data.id);
+
+    if (error) {
+      throw new Error("Failed to delete application");
+    }
     return { ok: true };
   });
 
@@ -112,48 +132,32 @@ export const adminUpsertCampaign = createServerFn({ method: "POST" })
   .validator(campaignSchema)
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
+    const payload = {
+      title: data.title,
+      client: data.client || null,
+      category: data.category || null,
+      cover_image: data.cover_image || null,
+      description: data.description || null,
+      results: data.results || null,
+      reach: data.reach || null,
+      engagement: data.engagement || null,
+      feedback: data.feedback || null,
+      published: data.published ? 1 : 0,
+      sort_order: data.sort_order,
+      updated_at: new Date().toISOString(),
+    };
+
     if (data.id) {
-      await db.execute({
-        sql: `UPDATE campaigns SET 
-                title = ?, client = ?, category = ?, cover_image = ?, description = ?, 
-                results = ?, reach = ?, engagement = ?, feedback = ?, published = ?, sort_order = ?, updated_at = datetime('now') 
-              WHERE id = ?`,
-        args: [
-          data.title,
-          data.client || null,
-          data.category || null,
-          data.cover_image || null,
-          data.description || null,
-          data.results || null,
-          data.reach || null,
-          data.engagement || null,
-          data.feedback || null,
-          data.published ? 1 : 0,
-          data.sort_order,
-          data.id,
-        ],
-      });
+      const { error } = await supabase
+        .from("campaigns")
+        .update(payload)
+        .eq("id", data.id);
+      if (error) throw new Error("Failed to update campaign");
     } else {
-      const id = crypto.randomUUID();
-      await db.execute({
-        sql: `INSERT INTO campaigns 
-                (id, title, client, category, cover_image, description, results, reach, engagement, feedback, published, sort_order) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          id,
-          data.title,
-          data.client || null,
-          data.category || null,
-          data.cover_image || null,
-          data.description || null,
-          data.results || null,
-          data.reach || null,
-          data.engagement || null,
-          data.feedback || null,
-          data.published ? 1 : 0,
-          data.sort_order,
-        ],
-      });
+      const { error } = await supabase
+        .from("campaigns")
+        .insert({ id: crypto.randomUUID(), ...payload });
+      if (error) throw new Error("Failed to insert campaign");
     }
     return { ok: true };
   });
@@ -162,8 +166,17 @@ export const adminListCampaigns = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.userId);
-    const res = await db.execute("SELECT * FROM campaigns ORDER BY sort_order ASC, created_at DESC");
-    return res.rows.map((row) => ({
+    const { data, error } = await supabase
+      .from("campaigns")
+      .select("*")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    if (error || !data) {
+      throw new Error("Failed to list campaigns");
+    }
+
+    return data.map((row) => ({
       id: String(row.id),
       created_at: String(row.created_at),
       updated_at: String(row.updated_at),
@@ -176,7 +189,7 @@ export const adminListCampaigns = createServerFn({ method: "GET" })
       reach: row.reach ? String(row.reach) : null,
       engagement: row.engagement ? String(row.engagement) : null,
       feedback: row.feedback ? String(row.feedback) : null,
-      gallery: row.gallery ? JSON.parse(String(row.gallery)) : [],
+      gallery: typeof row.gallery === "string" ? JSON.parse(row.gallery) : (row.gallery || []),
       published: Boolean(row.published),
       sort_order: Number(row.sort_order),
     }));
@@ -187,10 +200,12 @@ export const adminDeleteCampaign = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
-    await db.execute({
-      sql: "DELETE FROM campaigns WHERE id = ?",
-      args: [data.id],
-    });
+    const { error } = await supabase
+      .from("campaigns")
+      .delete()
+      .eq("id", data.id);
+
+    if (error) throw new Error("Failed to delete campaign");
     return { ok: true };
   });
 
@@ -208,8 +223,16 @@ export const adminListTeam = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.userId);
-    const res = await db.execute("SELECT * FROM team_members ORDER BY sort_order ASC");
-    return res.rows.map((row) => ({
+    const { data, error } = await supabase
+      .from("team_members")
+      .select("*")
+      .order("sort_order", { ascending: true });
+
+    if (error || !data) {
+      throw new Error("Failed to list team members");
+    }
+
+    return data.map((row) => ({
       id: String(row.id),
       created_at: String(row.created_at),
       updated_at: String(row.updated_at),
@@ -217,7 +240,7 @@ export const adminListTeam = createServerFn({ method: "GET" })
       role: String(row.role),
       image: row.image ? String(row.image) : null,
       bio: row.bio ? String(row.bio) : null,
-      socials: row.socials ? JSON.parse(String(row.socials)) : {},
+      socials: typeof row.socials === "string" ? JSON.parse(row.socials) : (row.socials || {}),
       sort_order: Number(row.sort_order),
       published: Boolean(row.published),
     }));
@@ -228,37 +251,27 @@ export const adminUpsertTeam = createServerFn({ method: "POST" })
   .validator(teamSchema)
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
+    const payload = {
+      name: data.name,
+      role: data.role,
+      image: data.image || null,
+      bio: data.bio || null,
+      sort_order: data.sort_order,
+      published: data.published ? 1 : 0,
+      updated_at: new Date().toISOString(),
+    };
+
     if (data.id) {
-      await db.execute({
-        sql: `UPDATE team_members SET 
-                name = ?, role = ?, image = ?, bio = ?, sort_order = ?, published = ?, updated_at = datetime('now') 
-              WHERE id = ?`,
-        args: [
-          data.name,
-          data.role,
-          data.image || null,
-          data.bio || null,
-          data.sort_order,
-          data.published ? 1 : 0,
-          data.id,
-        ],
-      });
+      const { error } = await supabase
+        .from("team_members")
+        .update(payload)
+        .eq("id", data.id);
+      if (error) throw new Error("Failed to update team member");
     } else {
-      const id = crypto.randomUUID();
-      await db.execute({
-        sql: `INSERT INTO team_members 
-                (id, name, role, image, bio, sort_order, published) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          id,
-          data.name,
-          data.role,
-          data.image || null,
-          data.bio || null,
-          data.sort_order,
-          data.published ? 1 : 0,
-        ],
-      });
+      const { error } = await supabase
+        .from("team_members")
+        .insert({ id: crypto.randomUUID(), ...payload });
+      if (error) throw new Error("Failed to insert team member");
     }
     return { ok: true };
   });
@@ -268,10 +281,12 @@ export const adminDeleteTeam = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
-    await db.execute({
-      sql: "DELETE FROM team_members WHERE id = ?",
-      args: [data.id],
-    });
+    const { error } = await supabase
+      .from("team_members")
+      .delete()
+      .eq("id", data.id);
+
+    if (error) throw new Error("Failed to delete team member");
     return { ok: true };
   });
 
@@ -289,8 +304,16 @@ export const adminListTestimonials = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.userId);
-    const res = await db.execute("SELECT * FROM testimonials ORDER BY sort_order ASC");
-    return res.rows.map((row) => ({
+    const { data, error } = await supabase
+      .from("testimonials")
+      .select("*")
+      .order("sort_order", { ascending: true });
+
+    if (error || !data) {
+      throw new Error("Failed to list testimonials");
+    }
+
+    return data.map((row) => ({
       id: String(row.id),
       created_at: String(row.created_at),
       updated_at: String(row.updated_at),
@@ -308,37 +331,27 @@ export const adminUpsertTestimonial = createServerFn({ method: "POST" })
   .validator(testimonialSchema)
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
+    const payload = {
+      author: data.author,
+      avatar: data.avatar || null,
+      quote: data.quote,
+      role: data.role || null,
+      sort_order: data.sort_order,
+      published: data.published ? 1 : 0,
+      updated_at: new Date().toISOString(),
+    };
+
     if (data.id) {
-      await db.execute({
-        sql: `UPDATE testimonials SET 
-                author = ?, avatar = ?, quote = ?, role = ?, sort_order = ?, published = ?, updated_at = datetime('now') 
-              WHERE id = ?`,
-        args: [
-          data.author,
-          data.avatar || null,
-          data.quote,
-          data.role || null,
-          data.sort_order,
-          data.published ? 1 : 0,
-          data.id,
-        ],
-      });
+      const { error } = await supabase
+        .from("testimonials")
+        .update(payload)
+        .eq("id", data.id);
+      if (error) throw new Error("Failed to update testimonial");
     } else {
-      const id = crypto.randomUUID();
-      await db.execute({
-        sql: `INSERT INTO testimonials 
-                (id, author, avatar, quote, role, sort_order, published) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          id,
-          data.author,
-          data.avatar || null,
-          data.quote,
-          data.role || null,
-          data.sort_order,
-          data.published ? 1 : 0,
-        ],
-      });
+      const { error } = await supabase
+        .from("testimonials")
+        .insert({ id: crypto.randomUUID(), ...payload });
+      if (error) throw new Error("Failed to insert testimonial");
     }
     return { ok: true };
   });
@@ -348,19 +361,24 @@ export const adminDeleteTestimonial = createServerFn({ method: "POST" })
   .validator(z.object({ id: z.string().uuid() }))
   .handler(async ({ context, data }) => {
     await assertAdmin(context.userId);
-    await db.execute({
-      sql: "DELETE FROM testimonials WHERE id = ?",
-      args: [data.id],
-    });
+    const { error } = await supabase
+      .from("testimonials")
+      .delete()
+      .eq("id", data.id);
+
+    if (error) throw new Error("Failed to delete testimonial");
     return { ok: true };
   });
 
 export const adminCheckRole = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
-    const roleRes = await db.execute({
-      sql: "SELECT role FROM user_roles WHERE user_id = ? AND role = 'admin'",
-      args: [context.userId],
-    });
-    return { isAdmin: roleRes.rows.length > 0 };
+    const { data: roleRes, error } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", context.userId)
+      .eq("role", "admin");
+
+    return { isAdmin: !error && roleRes && roleRes.length > 0 };
   });
+

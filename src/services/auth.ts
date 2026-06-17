@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { db, ensureDb, hashPassword, verifyPassword } from "@/lib/db";
+import { supabase, ensureDb, hashPassword, verifyPassword } from "@/lib/db";
 
 const authSchema = z.object({
   email: z.string().trim().email(),
@@ -16,16 +16,17 @@ export const loginFn = createServerFn({ method: "POST" })
     await ensureDb();
 
     // Query user
-    const userRes = await db.execute({
-      sql: "SELECT * FROM users WHERE email = ?",
-      args: [data.email.toLowerCase()],
-    });
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", data.email.toLowerCase())
+      .maybeSingle();
 
-    if (userRes.rows.length === 0) {
+    if (userError || !userData) {
       throw new Error("Invalid email or password");
     }
 
-    const user = userRes.rows[0] as unknown as { id: string; email: string; password_hash: string };
+    const user = userData as { id: string; email: string; password_hash: string };
 
     const valid = verifyPassword(data.password, user.password_hash);
     if (!valid) {
@@ -33,11 +34,16 @@ export const loginFn = createServerFn({ method: "POST" })
     }
 
     // Check if user has admin role
-    const roleRes = await db.execute({
-      sql: "SELECT role FROM user_roles WHERE user_id = ?",
-      args: [user.id],
-    });
-    const isAdmin = roleRes.rows.some((r) => r.role === "admin");
+    const { data: roles, error: rolesError } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id);
+
+    if (rolesError || !roles) {
+      throw new Error("Forbidden: User roles could not be loaded");
+    }
+
+    const isAdmin = roles.some((r) => r.role === "admin");
     if (!isAdmin) {
       throw new Error("Forbidden: User is not an admin");
     }
@@ -46,10 +52,13 @@ export const loginFn = createServerFn({ method: "POST" })
     const sessionToken = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(); // 7 days
 
-    await db.execute({
-      sql: "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)",
-      args: [sessionToken, user.id, expiresAt],
-    });
+    const { error: sessionError } = await supabase
+      .from("sessions")
+      .insert({ id: sessionToken, user_id: user.id, expires_at: expiresAt });
+
+    if (sessionError) {
+      throw new Error("Failed to create session");
+    }
 
     // Set cookie
     const { setCookie } = await import(VINXI_HTTP);
@@ -70,12 +79,13 @@ export const signupFn = createServerFn({ method: "POST" })
     await ensureDb();
 
     // Check if user already exists
-    const existsRes = await db.execute({
-      sql: "SELECT id FROM users WHERE email = ?",
-      args: [data.email.toLowerCase()],
-    });
+    const { data: existsData, error: existsError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("email", data.email.toLowerCase())
+      .maybeSingle();
 
-    if (existsRes.rows.length > 0) {
+    if (existsData) {
       throw new Error("User already exists");
     }
 
@@ -83,25 +93,34 @@ export const signupFn = createServerFn({ method: "POST" })
     const passwordHash = hashPassword(data.password);
 
     // Insert user
-    await db.execute({
-      sql: "INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)",
-      args: [userId, data.email.toLowerCase(), passwordHash],
-    });
+    const { error: userInsertError } = await supabase
+      .from("users")
+      .insert({ id: userId, email: data.email.toLowerCase(), password_hash: passwordHash });
+
+    if (userInsertError) {
+      throw new Error("Failed to create user");
+    }
 
     // Automatically make them admin for the admin panel
-    await db.execute({
-      sql: "INSERT INTO user_roles (id, user_id, role) VALUES (?, ?, ?)",
-      args: [crypto.randomUUID(), userId, "admin"],
-    });
+    const { error: roleInsertError } = await supabase
+      .from("user_roles")
+      .insert({ id: crypto.randomUUID(), user_id: userId, role: "admin" });
+
+    if (roleInsertError) {
+      throw new Error("Failed to assign user role");
+    }
 
     // Create session to auto sign in
     const sessionToken = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(); // 7 days
 
-    await db.execute({
-      sql: "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)",
-      args: [sessionToken, userId, expiresAt],
-    });
+    const { error: sessionInsertError } = await supabase
+      .from("sessions")
+      .insert({ id: sessionToken, user_id: userId, expires_at: expiresAt });
+
+    if (sessionInsertError) {
+      throw new Error("Failed to create session");
+    }
 
     // Set cookie
     const { setCookie } = await import(VINXI_HTTP);
@@ -123,10 +142,10 @@ export const logoutFn = createServerFn({ method: "POST" })
     const sessionToken = getCookie("session_token");
 
     if (sessionToken) {
-      await db.execute({
-        sql: "DELETE FROM sessions WHERE id = ?",
-        args: [sessionToken],
-      });
+      await supabase
+        .from("sessions")
+        .delete()
+        .eq("id", sessionToken);
       deleteCookie("session_token", { path: "/" });
     }
 
@@ -144,19 +163,24 @@ export const checkAuthFn = createServerFn({ method: "GET" })
     }
 
     // Query active session
-    const res = await db.execute({
-      sql: `SELECT users.id, users.email 
-            FROM sessions 
-            JOIN users ON sessions.user_id = users.id 
-            WHERE sessions.id = ? AND sessions.expires_at > datetime('now')`,
-      args: [sessionToken],
-    });
+    const { data: sessionData, error: sessionError } = await supabase
+      .from("sessions")
+      .select("id, expires_at, users (id, email)")
+      .eq("id", sessionToken)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
 
-    if (res.rows.length === 0) {
+    if (sessionError || !sessionData) {
       deleteCookie("session_token", { path: "/" });
       throw new Error("Unauthorized: Invalid or expired session");
     }
 
-    const user = res.rows[0] as unknown as { id: string; email: string };
+    const user = (sessionData as any).users as { id: string; email: string } | null;
+    if (!user) {
+      deleteCookie("session_token", { path: "/" });
+      throw new Error("Unauthorized: User not found");
+    }
+
     return { id: user.id, email: user.email };
   });
+
