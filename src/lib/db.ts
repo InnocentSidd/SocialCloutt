@@ -2,6 +2,15 @@ import { createClient } from "@supabase/supabase-js";
 import process from "node:process";
 import crypto from "node:crypto";
 
+if (typeof window === "undefined" && !globalThis.WebSocket) {
+  try {
+    const ws = await import("ws");
+    globalThis.WebSocket = (ws.default || ws) as any;
+  } catch (e) {
+    console.warn("Could not shim WebSocket on server:", e);
+  }
+}
+
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
 

@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkRouteImport } from './routes/work'
 import { Route as JoinRouteImport } from './routes/join'
+import { Route as CreatorReachRouteImport } from './routes/creator-reach'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AboutRouteImport } from './routes/about'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
@@ -25,6 +26,11 @@ const WorkRoute = WorkRouteImport.update({
 const JoinRoute = JoinRouteImport.update({
   id: '/join',
   path: '/join',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CreatorReachRoute = CreatorReachRouteImport.update({
+  id: '/creator-reach',
+  path: '/creator-reach',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRoute = AuthRouteImport.update({
@@ -56,6 +62,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/auth': typeof AuthRoute
+  '/creator-reach': typeof CreatorReachRoute
   '/join': typeof JoinRoute
   '/work': typeof WorkRoute
   '/admin': typeof AuthenticatedAdminRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/auth': typeof AuthRoute
+  '/creator-reach': typeof CreatorReachRoute
   '/join': typeof JoinRoute
   '/work': typeof WorkRoute
   '/admin': typeof AuthenticatedAdminRoute
@@ -74,21 +82,30 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/about': typeof AboutRoute
   '/auth': typeof AuthRoute
+  '/creator-reach': typeof CreatorReachRoute
   '/join': typeof JoinRoute
   '/work': typeof WorkRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/about' | '/auth' | '/join' | '/work' | '/admin'
+  fullPaths:
+    | '/'
+    | '/about'
+    | '/auth'
+    | '/creator-reach'
+    | '/join'
+    | '/work'
+    | '/admin'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/about' | '/auth' | '/join' | '/work' | '/admin'
+  to: '/' | '/about' | '/auth' | '/creator-reach' | '/join' | '/work' | '/admin'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/about'
     | '/auth'
+    | '/creator-reach'
     | '/join'
     | '/work'
     | '/_authenticated/admin'
@@ -99,6 +116,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AboutRoute: typeof AboutRoute
   AuthRoute: typeof AuthRoute
+  CreatorReachRoute: typeof CreatorReachRoute
   JoinRoute: typeof JoinRoute
   WorkRoute: typeof WorkRoute
 }
@@ -117,6 +135,13 @@ declare module '@tanstack/react-router' {
       path: '/join'
       fullPath: '/join'
       preLoaderRoute: typeof JoinRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/creator-reach': {
+      id: '/creator-reach'
+      path: '/creator-reach'
+      fullPath: '/creator-reach'
+      preLoaderRoute: typeof CreatorReachRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth': {
@@ -173,6 +198,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AboutRoute: AboutRoute,
   AuthRoute: AuthRoute,
+  CreatorReachRoute: CreatorReachRoute,
   JoinRoute: JoinRoute,
   WorkRoute: WorkRoute,
 }

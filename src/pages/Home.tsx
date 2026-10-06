@@ -71,7 +71,7 @@ export default function HomePage() {
 
       {/* HERO */}
       <section
-        className="relative w-full min-h-[800px] flex items-center justify-center overflow-hidden bg-black text-white py-20"
+        className="relative w-full min-h-[600px] md:min-h-[800px] flex items-center justify-center overflow-hidden bg-black text-white py-20"
         style={{
           backgroundImage: "url('BG.jpg')",
           backgroundSize: "cover",
@@ -88,7 +88,7 @@ export default function HomePage() {
             </span>
           </div>
 
-          <h1 className="font-display font-bold tracking-tight text-[clamp(3rem,12vw,11rem)] leading-[0.85]">
+          <h1 className="font-display font-bold tracking-tight text-[clamp(2.75rem,10vw,11rem)] leading-[0.85]">
             Creating
             <br />
             Influence.
@@ -106,12 +106,12 @@ export default function HomePage() {
               turning brands into the things people screenshot.
             </p>
 
-            <div className="flex flex-wrap gap-3">
-              <Button asChild size="lg">
+            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+              <Button asChild size="lg" className="w-full sm:w-auto">
                 <Link to="/join">Work with us</Link>
               </Button>
 
-              <Button asChild size="lg" variant="outline">
+              <Button asChild size="lg" variant="outline" className="w-full sm:w-auto">
                 <Link to="/work">See the work</Link>
               </Button>
             </div>
@@ -139,7 +139,7 @@ export default function HomePage() {
             {services.map((s) => (
               <div
                 key={s.n}
-                className="group bg-background p-8 md:p-10 transition-colors hover:bg-foreground hover:text-background cursor-default"
+                className="group bg-background p-6 md:p-10 transition-colors hover:bg-foreground hover:text-background cursor-default"
               >
                 <div className="flex items-start justify-between mb-8">
                   <span className="text-xs font-mono tracking-widest opacity-50">{s.n}</span>
@@ -155,58 +155,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* FEATURED WORK */}
-      <section className="py-10 md:py-10 bg-foreground text-background">
-        <div className="mx-auto max-w-7xl px-5 md:px-8">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-10 md:mb-14">
-            <h2 className="font-display text-5xl md:text-7xl font-bold tracking-tight">
-              Selected work.
-            </h2>
-            <Link
-              to="/work"
-              className="text-cloutt font-semibold inline-flex items-center gap-2 hover:gap-4 transition-all"
-            >
-              All campaigns <ArrowUpRight className="w-4 h-4" />
-            </Link>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-6 md:gap-8">
-            {campaigns.slice(0, 3).map((c) => (
-              <div key={c.id} className="group cursor-default">
-                <div className="aspect-[4/5] bg-background/5 border border-background/10 mb-4 relative overflow-hidden">
-                  {c.cover_image ? (
-                    <img
-                      src={c.cover_image}
-                      alt={c.title}
-                      loading="lazy"
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center font-display text-6xl font-bold text-background/10">
-                      {c.title.charAt(0)}
-                    </div>
-                  )}
-                  <div className="absolute top-4 left-4 text-xs uppercase tracking-widest text-cloutt">
-                    {c.category}
-                  </div>
-                </div>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="text-xs uppercase tracking-widest text-background/40 mb-1">
-                      {c.client}
-                    </div>
-                    <h3 className="font-display text-2xl font-bold">{c.title}</h3>
-                  </div>
-                  <div className="text-right text-xs">
-                    <div className="text-cloutt font-bold">{c.reach}</div>
-                    <div className="text-background/40">reach</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      
 
       {/* TESTIMONIALS */}
       {testimonials.length > 0 && (
@@ -234,7 +183,7 @@ export default function HomePage() {
 
       {/* CTA */}
       <section
-        className="relative py-22 md:py-32 overflow-hidden "
+        className="relative py-20 md:py-32 overflow-hidden "
         style={{
           backgroundImage: "url('/BG1.png')",
           backgroundSize: "cover",
@@ -247,18 +196,18 @@ export default function HomePage() {
 
         {/* Content */}
         <div className="relative mx-auto max-w-7xl px-5 md:px-8 text-center text-white">
-          <h2 className="font-display font-bold tracking-tight text-[clamp(3rem,10vw,9rem)] leading-[0.9]">
+          <h2 className="font-display font-bold tracking-tight text-[clamp(2.75rem,10vw,9rem)] leading-[0.9]">
             Let's make
             <br />
             <span className="italic font-normal">something loud.</span>{" "}
           </h2>
 
-          <div className="mt-12 flex flex-wrap gap-3 justify-center">
-            <Button asChild size="xl">
+          <div className="mt-12 flex flex-col sm:flex-row gap-3 justify-center items-center w-full max-w-md mx-auto sm:max-w-none">
+            <Button asChild size="xl" className="w-full sm:w-auto">
               <Link to="/join">Start a project →</Link>
             </Button>
 
-            <Button asChild size="xl">
+            <Button asChild size="xl" className="w-full sm:w-auto">
               <a href="mailto:socialcloutt@gmail.com">socialcloutt@gmail.com</a>
             </Button>
           </div>

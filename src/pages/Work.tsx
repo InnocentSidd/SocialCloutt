@@ -40,7 +40,10 @@ export default function WorkPage() {
 
       {categories.length > 0 && (
         <div className="border-y border-foreground/10 sticky top-16 md:top-20 bg-background/80 backdrop-blur z-30">
-          <div className="mx-auto max-w-7xl px-5 md:px-8 flex gap-2 overflow-x-auto py-3">
+          <div 
+            className="mx-auto max-w-7xl px-5 md:px-8 flex gap-2 overflow-x-auto py-3"
+            style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+          >
             <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
               All
             </FilterChip>

@@ -50,7 +50,7 @@ export default function JoinPage() {
 
       <section className="pb-20 md:pb-28">
         <div className="mx-auto max-w-4xl px-5 md:px-8">
-          <div role="tablist" className="grid grid-cols-3 gap-2 mb-10 md:mb-14">
+          <div role="tablist" className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-2 mb-10 md:mb-14">
             {tabs.map((t) => (
               <button
                 key={t.key}

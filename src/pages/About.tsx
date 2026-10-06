@@ -35,12 +35,9 @@ const values = [
 function HeroSection() {
   return (
     <div
-      className="relative w-full min-h-[800px] flex items-center justify-center overflow-hidden bg-black text-white py-20"
+      className="relative w-full min-h-[600px] md:min-h-[800px] flex items-center justify-center overflow-hidden bg-black text-white py-20 bg-cover bg-no-repeat bg-[position:80%_center] md:bg-center"
       style={{
         backgroundImage: "url('/BG.jpg')",
-        backgroundSize: "cover",
-        backgroundRepeat: "no-repeat",
-        backgroundPosition: "center",
       }}
     >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px]" />
@@ -101,7 +98,7 @@ export default function AboutPage() {
           </h2>
           <div className="grid md:grid-cols-2 gap-px bg-foreground/10">
             {values.map((v) => (
-              <div key={v.n} className="bg-background p-8 md:p-12">
+              <div key={v.n} className="bg-background p-6 md:p-12">
                 <div className="text-xs font-mono opacity-40 mb-6">{v.n}</div>
                 <h3 className="font-display text-3xl md:text-4xl font-bold mb-3 tracking-tight">
                   {v.title}
