@@ -286,12 +286,136 @@ function detectNiches(bio: string, hashtags: string[]): string[] {
 }
 
 /* ─────────────────────────────────────────────────────────────────
+   OFFICIAL INSTAGRAM GRAPH API (Business Discovery)
+   Requires env vars:
+     IG_GRAPH_ACCESS_TOKEN  – long-lived token with instagram_basic + pages_show_list
+     IG_GRAPH_USER_ID       – your own IG Business/Creator account id
+   Only Business/Creator target accounts can be looked up.
+───────────────────────────────────────────────────────────────── */
+type ProfileCore = {
+  username: string;
+  displayName: string;
+  bio: string;
+  isVerified: boolean;
+  profilePicUrl?: string;
+  followers: number;
+  following: number;
+  totalPosts: number;
+  isLive: boolean;
+};
+
+type ProfileSource = { core: ProfileCore; posts: ScrapedPost[] };
+
+const GRAPH_VERSION = "v21.0";
+
+class GraphNotBusinessError extends Error {}
+
+async function fetchViaGraphApi(username: string): Promise<ProfileSource | null> {
+  const token = process.env.IG_GRAPH_ACCESS_TOKEN;
+  const igUserId = process.env.IG_GRAPH_USER_ID;
+  if (!token || !igUserId) return null; // not configured
+
+  const mediaFields =
+    "id,caption,like_count,comments_count,media_type,media_product_type,timestamp,permalink,media_url,thumbnail_url";
+  const fields = `business_discovery.username(${username}){username,name,biography,profile_picture_url,followers_count,follows_count,media_count,media.limit(25){${mediaFields}}}`;
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${igUserId}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(token)}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  let json: any;
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    json = await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (json?.error) {
+    const e = json.error;
+    // 110 / 2207013 = target is not a Business/Creator account, or doesn't exist
+    if (e.code === 110 || e.error_subcode === 2207013 || /cannot find user|business_discovery/i.test(e.message || "")) {
+      throw new GraphNotBusinessError(e.message);
+    }
+    console.error("[Instagram Graph API] error:", e.code, e.error_subcode, e.message);
+    return null; // token/config problem — let the scraper try
+  }
+
+  const u = json?.business_discovery;
+  if (!u) return null;
+
+  const posts: ScrapedPost[] = (u.media?.data ?? []).map((m: any) => {
+    const caption = m.caption || "";
+    const isVideo = m.media_type === "VIDEO";
+    const isReel = m.media_product_type === "REELS" || (isVideo && m.media_product_type !== "FEED");
+    const shortcode = (m.permalink || "").match(/\/(?:p|reel)\/([^/]+)/)?.[1] || m.id;
+    return {
+      id: m.id,
+      pk: m.id,
+      shortcode,
+      caption,
+      displayUrl: m.thumbnail_url || m.media_url || "",
+      likeCount: m.like_count ?? 0,
+      commentCount: m.comments_count ?? 0,
+      viewCount: 0,
+      isVideo,
+      isReel,
+      isCarousel: m.media_type === "CAROUSEL_ALBUM",
+      isPinned: false,
+      timestamp: m.timestamp ? Date.parse(m.timestamp) / 1000 : Date.now() / 1000,
+      hashtags: extractHashtags(caption),
+      mentions: extractMentions(caption),
+      taggedAccounts: [],
+    };
+  });
+
+  return {
+    core: {
+      username: u.username || username,
+      displayName: u.name || toCleanDisplayName(username),
+      bio: u.biography || "",
+      isVerified: false,
+      profilePicUrl: u.profile_picture_url,
+      followers: u.followers_count ?? 0,
+      following: u.follows_count ?? 0,
+      totalPosts: u.media_count ?? posts.length,
+      isLive: true,
+    },
+    posts,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────────
    BUILD COMPLETE PROFILE ANALYSIS
 ───────────────────────────────────────────────────────────────── */
 export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<CreatorReachAnalysis> {
   const username = cleanInstagramInput(rawUsername);
   if (!username) throw new Error("Please provide a valid Instagram username or profile link.");
 
+  // 1. Official Graph API (reliable in production)
+  let notBusiness = false;
+  try {
+    const graph = await fetchViaGraphApi(username);
+    if (graph) return buildAnalysis(graph.core, graph.posts);
+  } catch (e) {
+    if (e instanceof GraphNotBusinessError) notBusiness = true;
+    else console.error("[Instagram Graph API] request failed:", (e as Error)?.message);
+  }
+
+  // 2. HTML scraper fallback (works locally; often blocked on cloud IPs)
+  try {
+    const scraped = await scrapeProfileCore(username);
+    return buildAnalysis(scraped.core, scraped.posts);
+  } catch (e: any) {
+    if (notBusiness && !e?.message?.includes("private")) {
+      throw new Error(
+        `@${username} isn't a public Business/Creator account (or doesn't exist). Instagram's official API only exposes Business & Creator profiles.`
+      );
+    }
+    throw e;
+  }
+}
+
+async function scrapeProfileCore(username: string): Promise<ProfileSource> {
   const html = await fetchProfilePage(username);
 
   // Check if private
@@ -459,6 +583,15 @@ export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<Crea
       postsToFetch[i].commentCount = stats.commentCount;
     }
   });
+
+  return {
+    core: { username, displayName, bio, isVerified, profilePicUrl, followers, following, totalPosts, isLive },
+    posts: parsedPosts,
+  };
+}
+
+function buildAnalysis(core: ProfileCore, parsedPosts: ScrapedPost[]): CreatorReachAnalysis {
+  const { username, displayName, bio, isVerified, profilePicUrl, followers, following, totalPosts, isLive } = core;
 
   // Baseline averages
   const validLikes = parsedPosts.map((p) => p.likeCount).filter((l) => l > 0);
@@ -891,7 +1024,7 @@ export const scrapeInstagramProfile = createServerFn({ method: "POST" })
         throw err;
       }
       // Never fabricate profile numbers — surface a clear, retryable error instead.
-      if (err?.message?.includes("was not found")) throw err;
+      if (err?.message?.includes("was not found") || err?.message?.includes("Business/Creator")) throw err;
       throw new Error(
         "Instagram temporarily blocked this request, so live follower/following/post counts couldn't be fetched. Please try again in a minute."
       );
