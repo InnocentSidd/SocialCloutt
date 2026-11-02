@@ -215,9 +215,15 @@ function getNiches(seed: number): string[] {
 }
 
 function fmt(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-  return n.toString();
+  if (n >= 1_000_000) {
+    const v = n / 1_000_000;
+    return (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1).replace(/\.0$/, "")) + "M";
+  }
+  if (n >= 1_000) {
+    const v = n / 1_000;
+    return (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1).replace(/\.0$/, "")) + "K";
+  }
+  return n.toLocaleString();
 }
 function fmtPct(n: number): string { return n.toFixed(2) + "%"; }
 
@@ -289,9 +295,12 @@ export default function CreatorReachPage() {
     try {
       const res = await scrapeInstagramProfile({ data: { username: trimmed } });
       setData(res);
+      if (res.source === "fallback") {
+        setError("Instagram anti-bot challenge active. Displaying algorithmic estimate snapshot.");
+      }
     } catch (err: any) {
       console.error("Live scraping error:", err);
-      if (err?.message?.includes("private Instagram account")) {
+      if (err?.message?.includes("private Instagram account") || err?.message?.includes("was not found")) {
         setError(err.message);
       } else {
         const fallback = generateMockData(trimmed);
@@ -426,9 +435,9 @@ export default function CreatorReachPage() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 w-full md:w-auto flex-shrink-0">
-                  <StatCard label="Followers" value={fmt(data.followers)} icon={Users} />
-                  <StatCard label="Following" value={fmt(data.following)} icon={UserCheck} />
-                  <StatCard label="Total Posts" value={fmt(data.totalPosts)} icon={Image} />
+                  <StatCard label="Followers" value={fmt(data.followers)} sub={data.followers >= 1000 ? `${data.followers.toLocaleString()} exact` : undefined} icon={Users} />
+                  <StatCard label="Following" value={data.following.toLocaleString()} icon={UserCheck} />
+                  <StatCard label="Total Posts" value={data.totalPosts.toLocaleString()} icon={Image} />
                   <StatCard label="Engagement Rate" value={fmtPct(data.engagementRate)} icon={TrendingUp} accent />
                 </div>
               </div>
@@ -545,8 +554,8 @@ export default function CreatorReachPage() {
                 <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {[
                     { label: "Reels", value: data.reelCount, icon: Film, color: LIME },
-                    { label: "Posts", value: data.contentSplit[1].value, icon: Image, color: DARK },
-                    { label: "Carousels", value: data.contentSplit[2].value, icon: Layers, color: GRAY },
+                    { label: "Posts", value: data.contentSplit.find(c => c.name === "Posts")?.value ?? 0, icon: Image, color: DARK },
+                    { label: "Carousels", value: data.contentSplit.find(c => c.name === "Carousels")?.value ?? 0, icon: Layers, color: GRAY },
                   ].map(({ label, value, icon: Icon, color }) => (
                     <div key={label} className="rounded-xl border border-foreground/10 p-5">
                       <div className="flex items-center gap-2 mb-3">
@@ -564,7 +573,7 @@ export default function CreatorReachPage() {
                   <div className="flex items-center gap-2 mb-4"><Pin className="w-4 h-4 text-destructive" /><span className="font-semibold">Pinned Content</span></div>
                   <div className="space-y-2">
                     {[
-                      { label: "Pinned Posts", value: Math.floor(data.contentSplit[1].value * 0.1), icon: Image },
+                      { label: "Pinned Posts", value: Math.floor((data.contentSplit.find(c => c.name === "Posts")?.value ?? 0) * 0.1), icon: Image },
                       { label: "Pinned Reels", value: data.reelPerfData.filter(r => r.pinned).length, icon: Film },
                       { label: "Pinned Carousel", value: 0, icon: Layers },
                     ].map(({ label, value, icon: Icon }) => (

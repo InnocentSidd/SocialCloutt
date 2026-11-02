@@ -149,16 +149,21 @@ const CRAWLER_UAS = [
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
 ];
 
-async function fetchWithTimeout(url: string, ua: string, timeoutMs = 3000): Promise<Response> {
+async function fetchWithTimeout(url: string, ua: string, timeoutMs = 6000): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       headers: {
         "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
       },
       redirect: "follow",
       signal: controller.signal,
@@ -175,7 +180,7 @@ async function fetchProfilePage(username: string): Promise<string> {
   try {
     const res = await Promise.any(
       primaryUas.map(async (ua) => {
-        const r = await fetchWithTimeout(`https://www.instagram.com/${encodeURIComponent(username)}/`, ua, 3000);
+        const r = await fetchWithTimeout(`https://www.instagram.com/${encodeURIComponent(username)}/`, ua, 6000);
         if (r.status === 404) {
           throw new Error("404_NOT_FOUND");
         }
@@ -188,7 +193,7 @@ async function fetchProfilePage(username: string): Promise<string> {
           ) {
             throw new Error("404_NOT_FOUND");
           }
-          if (text.length > 3000) return text;
+          if (text.length > 2000) return text;
         }
         throw new Error("INVALID_RESPONSE");
       })
@@ -200,16 +205,16 @@ async function fetchProfilePage(username: string): Promise<string> {
     }
   }
 
-  // Fast sequential fallback for other crawlers (max 2 attempts * 2s)
+  // Fast sequential fallback for other crawlers (max 2 attempts * 3s)
   for (const ua of [CRAWLER_UAS[2], CRAWLER_UAS[3]]) {
     try {
-      const r = await fetchWithTimeout(`https://www.instagram.com/${encodeURIComponent(username)}/`, ua, 2000);
+      const r = await fetchWithTimeout(`https://www.instagram.com/${encodeURIComponent(username)}/`, ua, 3500);
       if (r.status === 404) {
         throw new Error(`Profile @${username} was not found on Instagram.`);
       }
       if (r.ok) {
         const text = await r.text();
-        if (text.length > 3000) return text;
+        if (text.length > 2000) return text;
       }
     } catch (e: any) {
       if (e.message?.includes("not found")) throw e;
@@ -221,7 +226,7 @@ async function fetchProfilePage(username: string): Promise<string> {
 
 async function fetchPostStats(shortcode: string): Promise<{ likeCount: number; commentCount: number }> {
   try {
-    const res = await fetchWithTimeout(`https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`, CRAWLER_UAS[0], 1500);
+    const res = await fetchWithTimeout(`https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`, CRAWLER_UAS[0], 3500);
     if (!res.ok) return { likeCount: 0, commentCount: 0 };
     const html = await res.text();
 
@@ -352,14 +357,23 @@ export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<Crea
     profilePicUrl = ogImageMatch[1].replace(/&amp;/g, "&");
   }
 
+  // JSON follower_count/following_count are precise but can be stale (server-cached).
+  // Meta description values ("17K Followers, 258 Following, 55 Posts") are freshly rendered.
+  // Use JSON only when meta yielded zero; otherwise trust meta as the fresher source.
   const followerCountMatch = html.match(/"follower_count":\s*(\d+)/);
-  if (followerCountMatch && parseInt(followerCountMatch[1], 10) > 0) {
+  if (followers === 0 && followerCountMatch && parseInt(followerCountMatch[1], 10) > 0) {
     followers = parseInt(followerCountMatch[1], 10);
   }
 
   const followingCountMatch = html.match(/"following_count":\s*(\d+)/);
-  if (followingCountMatch && parseInt(followingCountMatch[1], 10) > 0) {
+  if (following === 0 && followingCountMatch && parseInt(followingCountMatch[1], 10) > 0) {
     following = parseInt(followingCountMatch[1], 10);
+  }
+
+  // Also try media_count from JSON if totalPosts is still zero
+  const mediaCountMatch = html.match(/"media_count":\s*(\d+)/);
+  if (totalPosts === 0 && mediaCountMatch && parseInt(mediaCountMatch[1], 10) > 0) {
+    totalPosts = parseInt(mediaCountMatch[1], 10);
   }
 
   // 3. Extract Timeline Posts
@@ -398,15 +412,22 @@ export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<Crea
 
   const isLive = !!(fMatch || followerCountMatch || timelineNodes.length > 0);
 
-  // Fallback defaults if zero
+  // Fallback defaults only if literally nothing was extracted
   if (followers === 0) followers = 15000;
   if (following === 0) following = 250;
-  if (totalPosts === 0) totalPosts = 48;
+  if (totalPosts === 0) totalPosts = timelineNodes.length > 0 ? timelineNodes.length : 48;
 
   // Parse raw nodes into ScrapedPost
   const parsedPosts: ScrapedPost[] = timelineNodes.map((n, idx) => {
     const pk = String(n.pk || n.id || idx);
-    const shortcode = pkToShortcode(pk);
+    let shortcode = n.code || "";
+    if (!shortcode && n.seo_canonical_url) {
+      const m = n.seo_canonical_url.match(/\/p\/([^\/]+)/);
+      if (m) shortcode = m[1];
+    }
+    if (!shortcode) {
+      shortcode = pkToShortcode(pk);
+    }
     const captionText = n.caption?.text || "";
     const isVideo = n.media_type === 2 || n.is_video === true || n.__typename === "XIGPolarisVideoMedia";
     const isReel = isVideo && (n.product_type === "clips" || n.__typename === "XIGPolarisVideoMedia");
@@ -424,14 +445,14 @@ export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<Crea
       shortcode,
       caption: captionText,
       displayUrl,
-      likeCount: 0,
-      commentCount: 0,
-      viewCount: 0,
+      likeCount: n.like_count ?? 0,
+      commentCount: n.comment_count ?? 0,
+      viewCount: n.play_count ?? n.view_count ?? 0,
       isVideo,
       isReel,
       isCarousel,
       isPinned,
-      timestamp: Date.now() / 1000 - idx * 86400 * 3,
+      timestamp: n.taken_at ?? (Date.now() / 1000 - idx * 86400 * 3),
       hashtags: extractHashtags(captionText),
       mentions: extractMentions(captionText),
       taggedAccounts: [],
@@ -475,9 +496,27 @@ export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<Crea
   const carousels = parsedPosts.filter((p) => p.isCarousel);
   const plainPosts = parsedPosts.filter((p) => !p.isVideo && !p.isCarousel);
 
-  const reelCount = Math.max(reels.length, Math.round(totalPosts * 0.45));
-  const postCount = Math.max(plainPosts.length, Math.round(totalPosts * 0.35));
-  const carouselCount = Math.max(carousels.length, Math.max(1, totalPosts - reelCount - postCount));
+  // Compute content split from actual scraped post ratios, then project across totalPosts.
+  // If we scraped 12 posts and 0 are reels, 12 are carousels, 0 are plain — use those ratios.
+  // Only fall back to estimates if we have zero scraped posts.
+  let reelCount: number;
+  let postCount: number;
+  let carouselCount: number;
+
+  const scrapedTotal = parsedPosts.length;
+  if (scrapedTotal > 0) {
+    const reelRatio = reels.length / scrapedTotal;
+    const carouselRatio = carousels.length / scrapedTotal;
+    const postRatio = plainPosts.length / scrapedTotal;
+    reelCount = Math.round(totalPosts * reelRatio);
+    carouselCount = Math.round(totalPosts * carouselRatio);
+    postCount = Math.max(0, totalPosts - reelCount - carouselCount);
+  } else {
+    // No scraped posts — use conservative default estimates
+    reelCount = Math.round(totalPosts * 0.45);
+    postCount = Math.round(totalPosts * 0.35);
+    carouselCount = Math.max(1, totalPosts - reelCount - postCount);
+  }
 
   const avgLikes = estimatedAvgLikes;
   const avgComments = estimatedAvgComments;
