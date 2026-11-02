@@ -156,14 +156,9 @@ async function fetchWithTimeout(url: string, ua: string, timeoutMs = 6000): Prom
     const res = await fetch(url, {
       headers: {
         "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Upgrade-Insecure-Requests": "1",
       },
       redirect: "follow",
       signal: controller.signal,
@@ -174,56 +169,51 @@ async function fetchWithTimeout(url: string, ua: string, timeoutMs = 6000): Prom
   }
 }
 
+function isNotFoundPage(text: string): boolean {
+  return (
+    text.includes("Sorry, this page isn't available") ||
+    text.includes("The link you followed may be broken") ||
+    text.includes("Page Not Found")
+  );
+}
+
+/** A page is only useful if it actually carries the profile counters (login walls / challenges don't). */
+function hasProfileCounters(text: string): boolean {
+  return /[\d.,]+[KMB]?\s*Followers/i.test(text) || /"follower_count":\s*\d+/.test(text) || text.includes('"is_private":true');
+}
+
 async function fetchProfilePage(username: string): Promise<string> {
-  // Parallel race for search engine bots first (Googlebot & Bingbot)
-  const primaryUas = [CRAWLER_UAS[0], CRAWLER_UAS[1]];
-  try {
-    const res = await Promise.any(
-      primaryUas.map(async (ua) => {
-        const r = await fetchWithTimeout(`https://www.instagram.com/${encodeURIComponent(username)}/`, ua, 6000);
-        if (r.status === 404) {
-          throw new Error("404_NOT_FOUND");
-        }
-        if (r.ok) {
-          const text = await r.text();
-          if (
-            text.includes("Sorry, this page isn't available") ||
-            text.includes("The link you followed may be broken") ||
-            text.includes("Page Not Found")
-          ) {
-            throw new Error("404_NOT_FOUND");
-          }
-          if (text.length > 2000) return text;
-        }
-        throw new Error("INVALID_RESPONSE");
+  const url = `https://www.instagram.com/${encodeURIComponent(username)}/`;
+  // facebookexternalhit is fastest & least challenged; Googlebot/Bingbot as parallel backups.
+  const uas = [CRAWLER_UAS[2], CRAWLER_UAS[0], CRAWLER_UAS[1]];
+
+  const attempt = () =>
+    Promise.any(
+      uas.map(async (ua) => {
+        const r = await fetchWithTimeout(url, ua, 7000);
+        if (r.status === 404) throw new Error("404_NOT_FOUND");
+        if (!r.ok) throw new Error(`HTTP_${r.status}`);
+        const text = await r.text();
+        if (isNotFoundPage(text)) throw new Error("404_NOT_FOUND");
+        if (!hasProfileCounters(text)) throw new Error("NO_COUNTERS");
+        return text;
       })
     );
-    return res;
-  } catch (err: any) {
-    if (err.message === "404_NOT_FOUND") {
-      throw new Error(`Profile @${username} was not found on Instagram.`);
-    }
-  }
 
-  // Fast sequential fallback for other crawlers (max 2 attempts * 3s)
-  for (const ua of [CRAWLER_UAS[2], CRAWLER_UAS[3]]) {
+  for (let i = 0; i < 2; i++) {
     try {
-      const r = await fetchWithTimeout(`https://www.instagram.com/${encodeURIComponent(username)}/`, ua, 3500);
-      if (r.status === 404) {
+      return await attempt();
+    } catch (err: any) {
+      const errors: any[] = err?.errors ?? [err];
+      if (errors.every((e) => e?.message === "404_NOT_FOUND")) {
         throw new Error(`Profile @${username} was not found on Instagram.`);
       }
-      if (r.ok) {
-        const text = await r.text();
-        if (text.length > 2000) return text;
-      }
-    } catch (e: any) {
-      if (e.message?.includes("not found")) throw e;
+      if (i === 0) await new Promise((r) => setTimeout(r, 600));
     }
   }
 
   throw new Error(`Instagram rate-limiting or anti-bot challenge active for @${username}`);
 }
-
 async function fetchPostStats(shortcode: string): Promise<{ likeCount: number; commentCount: number }> {
   try {
     const res = await fetchWithTimeout(`https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`, CRAWLER_UAS[0], 3500);
@@ -413,9 +403,10 @@ export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<Crea
   const isLive = !!(fMatch || followerCountMatch || timelineNodes.length > 0);
 
   // Fallback defaults only if literally nothing was extracted
-  if (followers === 0) followers = 15000;
-  if (following === 0) following = 250;
-  if (totalPosts === 0) totalPosts = timelineNodes.length > 0 ? timelineNodes.length : 48;
+  if (!fMatch && !followerCountMatch) {
+    throw new Error(`Instagram rate-limiting or anti-bot challenge active for @${username}`);
+  }
+  if (totalPosts === 0) totalPosts = timelineNodes.length;
 
   // Parse raw nodes into ScrapedPost
   const parsedPosts: ScrapedPost[] = timelineNodes.map((n, idx) => {
@@ -521,7 +512,7 @@ export async function scrapeAndAnalyzeProfile(rawUsername: string): Promise<Crea
   const avgLikes = estimatedAvgLikes;
   const avgComments = estimatedAvgComments;
   const avgViews = estimatedAvgViews;
-  const engagementRate = Number((((avgLikes + avgComments) / followers) * 100).toFixed(2));
+  const engagementRate = Number((((avgLikes + avgComments) / Math.max(1, followers)) * 100).toFixed(2));
 
   let engagementQuality = "Average";
   let engagementStars = 3;
@@ -732,7 +723,7 @@ export function buildAlgorithmicAnalysis(rawUsername: string): CreatorReachAnaly
   const avgComments = Math.max(1, Math.round(avgLikes * 0.038));
   const avgViews = Math.round(avgLikes * 7.5);
   const highestViews = Math.round(avgViews * 4.2);
-  const engagementRate = Number((((avgLikes + avgComments) / followers) * 100).toFixed(2));
+  const engagementRate = Number((((avgLikes + avgComments) / Math.max(1, followers)) * 100).toFixed(2));
 
   let engagementQuality = "Good";
   let engagementStars = 3;
@@ -899,7 +890,10 @@ export const scrapeInstagramProfile = createServerFn({ method: "POST" })
       if (err?.message?.includes("is a private Instagram account")) {
         throw err;
       }
-      // Otherwise, return robust algorithmic analysis so user never sees a broken screen
-      return buildAlgorithmicAnalysis(data.username);
+      // Never fabricate profile numbers — surface a clear, retryable error instead.
+      if (err?.message?.includes("was not found")) throw err;
+      throw new Error(
+        "Instagram temporarily blocked this request, so live follower/following/post counts couldn't be fetched. Please try again in a minute."
+      );
     }
   });

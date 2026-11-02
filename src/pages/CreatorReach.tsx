@@ -295,18 +295,12 @@ export default function CreatorReachPage() {
     try {
       const res = await scrapeInstagramProfile({ data: { username: trimmed } });
       setData(res);
-      if (res.source === "fallback") {
-        setError("Instagram anti-bot challenge active. Displaying algorithmic estimate snapshot.");
-      }
     } catch (err: any) {
       console.error("Live scraping error:", err);
-      if (err?.message?.includes("private Instagram account") || err?.message?.includes("was not found")) {
-        setError(err.message);
-      } else {
-        const fallback = generateMockData(trimmed);
-        setData(fallback);
-        setError("Instagram rate-limiting active on live queries. Displaying high-precision algorithmic estimate for " + trimmed + ".");
-      }
+      setError(
+        err?.message ||
+          "Couldn't fetch live Instagram data right now. Please try again in a minute."
+      );
     } finally {
       setLoading(false);
     }
